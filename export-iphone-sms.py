@@ -37,7 +37,7 @@ desc = """SMS Exporter from iPhone backup
 
 import os, sys
 import getopt
-import sqlite3
+import sqlite3 as db # abstraction of database
 import csv
 from datetime import datetime
 
@@ -56,7 +56,7 @@ class Exporter:
     
     def __init__(self, sqlite_db, encoding='utf8'):
         self.sqlite_db = sqlite_db
-        self.conn = sqlite3.connect(sqlite_db)
+        self.conn = db.connect(sqlite_db)
         self.data = None
         self.fields = ('rowid', 'date', 'address', 'text', 'flags')
         self.encoding = encoding
@@ -135,13 +135,17 @@ class Exporter:
         self.conn.close()
     
     @staticmethod
-    def try_db_file(path):
-        conn = sqlite3.connect(path)
+    def get_last_sms(path):
+        conn = db.connect(path)
         c = conn.cursor()
-        try:
-            c.execute('select rowid, address, text, flags from message')
-            ret = True
-        except sqlite3.OperationalError:
+        try:                # v count(*) is not standard in all databases
+            c.execute('select count(*), rowid, date, address, text, flags from message order by date desc')
+            row = c.fetchone()
+            if row != None:
+                ret = (row[0], row[2])
+            else:
+                ret = False
+        except db.OperationalError:
             ret = False
         c.close()
         conn.close()
@@ -198,9 +202,11 @@ def get_menu_choice(text, choices, quiet):
     while True:
         try:
             i = -1
-            for f in choices:
+            for f, sms in choices:
+                count = sms[0]
+                date = datetime.fromtimestamp(sms[1])
                 i += 1
-                log('%(i)d. %(f)s' % locals(), 4)
+                log('%(i)d. %(count)d messages, latest at %(date)s' % locals(), 4)
                 
             log('q. quit', 4)
             log('choice: ', 4, False)
@@ -209,7 +215,8 @@ def get_menu_choice(text, choices, quiet):
                 return choice
             elif int(choice) >= 0 and int(choice) <= i:
                 return choice
-        except:
+        except Exception, e:
+            log(e)
             log('not a number',4)
 
 def main(argv):
@@ -225,8 +232,9 @@ def main(argv):
                 db_file = open(filepath)
                 content = db_file.read(15)
                 if content == 'SQLite format 3':
-                    if Exporter.try_db_file(filepath):
-                        path.append(filepath)
+                    last_sms = Exporter.get_last_sms(filepath)
+                    if last_sms:
+                        path.append((filepath, last_sms))
     
     if len(path) == 0:
         log('not found', 3)
@@ -235,7 +243,7 @@ def main(argv):
         choice = get_menu_choice('%d sms databases found, pick up one :[0, %d] ' % \
             (len(path), (len(path)-1)), path, quiet)
         if choice == 'q': sys.exit(EXIT_SUCCESS)
-        path = path[int(choice)]
+        path = path[int(choice)][0]
     else:
         path = path[0]
         log('found in "%s"' % path, 3)
