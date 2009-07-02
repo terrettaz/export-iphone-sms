@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: iso-8859-1 -*-
-__version__ = "$Revision: 0.1 $"
+
+version = '0.2'
+
+__version__ = "$Revision: %s $" % version
 __author__ = "Pierrick Terrettaz"
 __date__ = "2009-04-27"
 
@@ -21,6 +24,8 @@ desc = """SMS Exporter from iPhone backup
         -E <encoding>   : encoding (default utf8)
         -q              : quiet    (default false)
         -b <backup_dir> : backup_dir (default see upper)
+        -v              : print version
+        -c              : check last version
   
   Exit status code:
     EXIT_SUCCESS = 0
@@ -28,6 +33,7 @@ desc = """SMS Exporter from iPhone backup
     EXIT_ERROR_QUIET = 2
     EXIT_ERROR_EXPORTER = 3
     EXIT_ERROR_NOT_FOUND = 4
+    EXIT_ERROR_VERSION_CHECK = 5
   
   Example:
     export-iphone-sms txt
@@ -51,6 +57,7 @@ EXIT_ERROR = 1
 EXIT_ERROR_QUIET = 2
 EXIT_ERROR_EXPORTER = 3
 EXIT_ERROR_NOT_FOUND = 4
+EXIT_ERROR_VERSION_CHECK = 5
 
 class Exporter:
     
@@ -64,7 +71,7 @@ class Exporter:
     def __open_cursor(self):
         c = self.conn.cursor()
         c.execute(
-            'select %s from message order by rowid' % \
+            'select %s from message where text is not null order by rowid' % \
             reduce(lambda x, y: '%s, %s' % (x,y), self.fields))
         return c
 
@@ -139,9 +146,9 @@ class Exporter:
         conn = db.connect(path)
         c = conn.cursor()
         try:                # v count(*) is not standard in all databases
-            c.execute('select count(*), rowid, date, address, text, flags from message order by date desc')
+            c.execute('select count(*), rowid, date, address, text, flags from message where text is not null order by date desc')
             row = c.fetchone()
-            if row != None:
+            if row != None and row[0] != None and row[0] > 0:
                 ret = (row[0], row[2])
             else:
                 ret = False
@@ -169,18 +176,41 @@ def log(string, indent=2, newline=True):
         if newline:
             sys.stderr.write('\n')
 
+def get_last_version():
+    url = 'http://wiki.github.com/terrettaz/export-iphone-sms/version'
+    try:
+        import urllib
+        import re
+        page = urllib.urlopen(url).read()
+        groups = re.findall('<p>current version: ([0-9\.]+)</p>', page)
+        if len(groups) == 1:
+            return groups[0]
+        else:
+            raise Exception()
+        
+    except:
+        log('unable to check last version on "%(url)s"' % locals())
+        sys.exit(EXIT_ERROR_VERSION_CHECK)
+
 def parse_argv(argv):
     try:
-        opts, args = getopt.getopt(argv[1:], 'E:b:qh')
+        opts, args = getopt.getopt(argv[1:], 'E:b:qhvc')
     except getopt.GetoptError:
         usage()
         
-    global quiet, encoding, backup_dir
+    global quiet, encoding, backup_dir, version
     for o, v in opts:
         if o == '-E':
             encoding = v
         if o == '-q':
             quiet = True
+        if o == '-v':
+            log('version: %s' % version)
+            sys.exit(EXIT_SUCCESS)
+        if o == '-c':
+            log('your version: %s' % version)
+            log('last available version: %s' % get_last_version())
+            sys.exit(EXIT_SUCCESS)
         if o == '-b':
             backup_dir = v
         if o == '-h':
@@ -207,7 +237,7 @@ def get_menu_choice(text, choices, quiet):
                 date = datetime.fromtimestamp(sms[1])
                 i += 1
                 log('%(i)d. %(count)d messages, latest at %(date)s' % locals(), 4)
-                
+            
             log('q. quit', 4)
             log('choice: ', 4, False)
             choice = sys.stdin.readline().lower()[:-1] # escape new line
@@ -218,6 +248,7 @@ def get_menu_choice(text, choices, quiet):
         except Exception, e:
             log(e)
             log('not a number',4)
+            break
 
 def main(argv):
     format, encoding, backup_dir, quiet = parse_argv(argv)
