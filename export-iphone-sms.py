@@ -276,7 +276,7 @@ def main(argv):
         if choice == 'q': sys.exit(EXIT_SUCCESS)
         path = path[int(choice)][0]
     else:
-        path = path[0]
+        path = path[0][0]
         log('found in "%s"' % path, 3)
     
     exporter = Exporter(path, encoding)
