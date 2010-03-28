@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: iso-8859-1 -*-
 
-version = '0.2'
+version = '0.3'
 
 __version__ = "$Revision: %s $" % version
 __author__ = "Pierrick Terrettaz"
@@ -14,14 +14,15 @@ desc = """SMS Exporter from iPhone backup
   * Read file and export the file in a readable format.
     format supported : 
       - txt : Text plain format
-      - csv : Exchangable format as text plain
-      - xml : not yet implemented
+      - csv : Exchangable format as comma separated
+      - xml : Exchangable format as XML
+      - json : JavaScript Object Notation
 
   Usage: export-iphone-sms [options] format
       format: txt, csv
       options
         -h              : print this help
-        -E <encoding>   : encoding (default utf8)
+        -E <encoding>   : encoding (default utf-8)
         -q              : quiet    (default false)
         -b <backup_dir> : backup_dir (default see upper)
         -v              : print version
@@ -59,7 +60,7 @@ EXIT_ERROR_EXPORTER = 3
 EXIT_ERROR_NOT_FOUND = 4
 EXIT_ERROR_VERSION_CHECK = 5
 
-class Exporter:
+class SMSExporter(object):
     
     def __init__(self, sqlite_db, encoding='utf8'):
         self.sqlite_db = sqlite_db
@@ -67,6 +68,7 @@ class Exporter:
         self.data = None
         self.fields = ('rowid', 'date', 'address', 'text', 'flags')
         self.encoding = encoding
+        self.exporters = {}
     
     def __open_cursor(self):
         c = self.conn.cursor()
@@ -79,10 +81,7 @@ class Exporter:
         data = {}
         i = 0
         for field in self.fields:
-            if field == 'text':
-                data[field] = row[i].encode(self.encoding)
-            else:
-                data[field] = row[i]
+            data[field] = row[i]
             i += 1
         return data
             
@@ -108,34 +107,18 @@ class Exporter:
                 callback(row)
         return count
     
-    def export_txt(self, message):
-        if message['flags'] == 2:
-            pre = 'form'
-        else:
-            pre = 'to'
-        date = datetime.fromtimestamp(message['date'])
-        
-        self.needle.write('\n')
-        self.needle.write('message %d %s %s \n' % \
-            (message['rowid'], pre, message['address']))
-        self.needle.write('   %s\n' % date)
-        self.needle.write('   %s\n' % message['text'])
-        self.needle.write('---------\n')
+    def register(self, exporter):
+        self.exporters[exporter.name] = exporter
     
-    def export_csv(self, message):
-        writer = csv.writer(self.needle, delimiter=';', quoting=csv.QUOTE_ALL)
-        writer.writerow(message.values())
-    
-    def export(self, type='txt', exporter=None):
-        if exporter == None:
-            try: 
-                exporter = getattr(self, "export_%s" % type )
-            except AttributeError:
-                log('Error: no exporter for "%s"' % type)
-                sys.exit(EXIT_ERROR_EXPORTER)
+    def export(self, type):
+        if type not in self.exporters:
+            log('Error: no exporter for "%s"' % type)
+            sys.exit(EXIT_ERROR_EXPORTER)
             
-        self.needle = sys.stdout
-        count = self.__loop_messages(exporter)
+        exporter = self.exporters[type]
+        exporter.init(sys.stdout, self.encoding)
+        count = self.__loop_messages(exporter.export)
+        exporter.end()
         log('export finished, %(count)d sms' % locals())
     
     def close(self):
@@ -250,6 +233,110 @@ def get_menu_choice(text, choices, quiet):
             log('not a number',4)
             break
 
+## Exporters
+class ExporterBase(object):
+    def init(self, needle, encoding):
+        self.needle = needle
+        self.encoding = encoding
+    
+    def export(self, message):
+        pass
+
+    def end(self):
+        pass
+    
+    def _encode(self, uni):
+        return uni.encode(self.encoding)
+
+class TextExporter(ExporterBase):
+    name = 'txt'
+    
+    def export(self, message):
+        if message['flags'] == 2:
+            pre = 'form'
+        else:
+            pre = 'to'
+        date = datetime.fromtimestamp(message['date'])
+        self.needle.write(self._encode(u'\n message %d %s ' % (message['rowid'], pre)))
+        self.needle.write(self._encode(message['address']))
+        self.needle.write(self._encode(u' \n %s\n   ' % date))
+        self.needle.write(self._encode(message['text']))
+        self.needle.write(self._encode(u'\n---------\n'))
+
+class CSVExporter(ExporterBase):
+    name = 'csv'
+
+    def init(self, needle, encoding):
+        import cStringIO
+        import codecs
+        super(CSVExporter, self).init(needle, encoding)
+        self.queue = cStringIO.StringIO()
+        self.writer = csv.writer(self.queue, delimiter=';', quoting=csv.QUOTE_ALL)
+        self.encoder = codecs.getincrementalencoder(encoding)()
+
+    def export(self, message):
+        fields = []
+        for field in message.values():
+            if isinstance(field, unicode):
+                field = field.encode('utf-8')
+            fields.append(field)
+        self.writer.writerow(fields)
+        data = self.queue.getvalue()
+        data = data.decode('utf-8')
+        data = self.encoder.encode(data)
+        self.needle.write(data)
+        self.queue.truncate(0)
+        
+
+class BufferedExporterBase(ExporterBase):
+    def init(self, needle, encoding):
+        super(BufferedExporterBase, self).init(needle, encoding)
+        self.messages = []
+    
+    def export(self, message):
+        self.messages.append(message)
+    
+class JSONExporter(BufferedExporterBase):
+    name = 'json'
+    
+    def end(self):
+        try:
+            import json
+        except:
+            import simplejson as json
+            
+        ret = json.dumps(self.messages, ensure_ascii = False)
+        self.needle.write(self._encode(ret))
+
+class XMLMessageFactory(object):
+    
+    def create(self, doc, message, encoding):
+        el_message = doc.createElement('message')
+        el_message.setAttribute('id', str(message['rowid']))
+        el_message.setAttribute('address', message['address'])
+        el_message.setAttribute('date', str(message['date']))
+        if message['flags'] == 2:
+            action = 'income'
+        else:
+            action = 'outcome'
+        el_message.setAttribute('action', action)
+        el_message.appendChild(doc.createTextNode(message['text']))
+        return el_message
+
+class XMLExporter(BufferedExporterBase):
+    name = 'xml'
+    def __init__(self, message_factory):
+        self.message_factory = message_factory
+        
+    def end(self):
+        from xml.dom import getDOMImplementation
+        impl = getDOMImplementation()
+        doc = impl.createDocument(None, "messages", None)
+        el_messages = doc.documentElement
+        for message in self.messages:
+            el_messages.appendChild(self.message_factory.create(doc, message, self.encoding))
+        self.needle.write(doc.toprettyxml(encoding = self.encoding))
+        
 def main(argv):
     format, encoding, backup_dir, quiet = parse_argv(argv)
     
@@ -263,7 +350,7 @@ def main(argv):
                 db_file = open(filepath)
                 content = db_file.read(15)
                 if content == 'SQLite format 3':
-                    last_sms = Exporter.get_last_sms(filepath)
+                    last_sms = SMSExporter.get_last_sms(filepath)
                     if last_sms:
                         path.append((filepath, last_sms))
     
@@ -279,8 +366,11 @@ def main(argv):
         path = path[0][0]
         log('found in "%s"' % path, 3)
     
-    exporter = Exporter(path, encoding)
-    exporter.preload()
+    exporter = SMSExporter(path, encoding)
+    exporter.register(TextExporter())
+    exporter.register(CSVExporter())
+    exporter.register(XMLExporter(XMLMessageFactory()))
+    exporter.register(JSONExporter())
     exporter.export(type=format)
     exporter.close()
     
