@@ -28,6 +28,7 @@ desc = """SMS Exporter from iPhone backup
         -q              : quiet    (default false)
         -v              : print version
         -c              : check last version
+        -u              : upgrade to last version
   
   Exit status code:
     EXIT_SUCCESS = 0
@@ -44,6 +45,7 @@ desc = """SMS Exporter from iPhone backup
 """
 
 import os, sys
+import urllib
 import getopt
 import sqlite3 as db # abstraction of database
 from datetime import datetime
@@ -282,9 +284,29 @@ def get_last_version():
         log('unable to check last version on "%(url)s"' % locals())
         sys.exit(EXIT_ERROR_VERSION_CHECK)
 
+def upgrade_to_last_version():
+    latest = get_last_version()
+    if version == get_last_version():
+        log('already up-to-date')
+        sys.exit(EXIT_SUCCESS)
+    
+    log('Upgrade from %s to %s ? [y/n]: ' % (version, latest), newline=False)
+    choice = sys.stdin.readline().lower()[:-1] # escape new line
+    
+    if choice == 'y':
+        path = os.path.realpath(sys.argv[0])
+        log('Downloading content from github')
+        url = 'http://github.com/terrettaz/export-iphone-sms/raw/master/export-iphone-sms.py'
+        content = page = urllib.urlopen(url).read()
+        open(path, 'w').write(content)
+        log('New file installed: %s' % path)
+        log('Done!')
+    else:
+        log('Aborted!')
+
 def parse_argv(argv):
     try:
-        opts, args = getopt.getopt(argv[1:], 'E:b:f:qhvc')
+        opts, args = getopt.getopt(argv[1:], 'E:b:f:qhvcu')
     except getopt.GetoptError:
         usage()
         
@@ -304,6 +326,9 @@ def parse_argv(argv):
         if o == '-c':
             log('your version: %s' % version)
             log('last available version: %s' % get_last_version())
+            sys.exit(EXIT_SUCCESS)
+        if o == '-u':
+            upgrade_to_last_version()
             sys.exit(EXIT_SUCCESS)
         if o == '-b':
             backup_dir = v
