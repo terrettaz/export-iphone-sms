@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: iso-8859-1 -*-
 
-version = '0.4'
+version = '0.5'
 
 __version__ = "$Revision: %s $" % version
 __author__ = "Pierrick Terrettaz"
@@ -352,14 +352,13 @@ def main(argv):
     
     for root, dirs, files in os.walk(backup_dir):
         for f in files:
-            if f.endswith('.mddata'):
-                filepath = os.path.join(root, f)
-                db_file = open(filepath)
-                content = db_file.read(15)
-                if content == 'SQLite format 3':
-                    last_sms = SMSExporter.get_last_sms(filepath)
-                    if last_sms:
-                        path.append((filepath, last_sms))
+            filepath = os.path.join(root, f)
+            db_file = open(filepath)
+            content = db_file.read(15)
+            if content == 'SQLite format 3':
+                last_sms = SMSExporter.get_last_sms(filepath)
+                if last_sms:
+                    path.append((filepath, last_sms))
     
     if len(path) == 0:
         log('not found', 3)
