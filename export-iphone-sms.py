@@ -161,6 +161,7 @@ class ExporterBase(object):
     def init(self, output, encoding):
         self.output = output
         self.encoding = encoding
+        self.date_format = '%d.%m.%Y %H:%M'
 
     def export(self, message):
         pass
@@ -182,7 +183,7 @@ class TextExporter(ExporterBase):
         date = datetime.fromtimestamp(message['date'])
         self.output.write(self._encode(u'\n message %d %s ' % (message['rowid'], pre)))
         self.output.write(self._encode(message['address']))
-        self.output.write(self._encode(u' \n %s\n   ' % date))
+        self.output.write(self._encode(u' \n %s\n   ' % date.strftime(self.date_format)))
         self.output.write(self._encode(message['text']))
         self.output.write(self._encode(u'\n---------\n'))
 
@@ -333,9 +334,10 @@ class HTMLExporter(BufferedExporterBase):
             action = 'income'
         else:
             action = 'outcome'
+        date = datetime.fromtimestamp(message['date'])
         el_message = self.create_el(doc, 'div', parent, [('class', '%s %s' % ('message', action))])
         self.create_el(doc, 'div', el_message, [('class', 'message_id')]).appendChild(doc.createTextNode(str(message['rowid'])))
-        self.create_el(doc, 'div', el_message, [('class', 'message_date')]).appendChild(doc.createTextNode(str(message['date'])))
+        self.create_el(doc, 'div', el_message, [('class', 'message_date')]).appendChild(doc.createTextNode(date.strftime(self.date_format)))
         self.create_el(doc, 'div', el_message, [('class', 'message_address')]).appendChild(doc.createTextNode(message['address']))
         self.create_el(doc, 'div', el_message, [('class', 'message_text')]).appendChild(doc.createTextNode(message['text']))
         return el_message
