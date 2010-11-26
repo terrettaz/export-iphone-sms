@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: iso-8859-1 -*-
 
-version = '0.5'
+version = '0.6'
 
 __version__ = "$Revision: %s $" % version
 __author__ = "Pierrick Terrettaz"
@@ -12,8 +12,9 @@ desc = """SMS Exporter from iPhone backup
   * Locate SMS SQLite database in iphone backup dir recursively:
     ~/Library/Application Support/MobileSync
   * Read file and export the file in a readable format.
-    format supported : 
+    Supported formats : 
       - txt  : Text plain format
+      - html : HTML files
       - csv  : Exchangable format as comma separated
       - xml  : Exchangable format as XML
       - json : JavaScript Object Notation
@@ -25,6 +26,7 @@ desc = """SMS Exporter from iPhone backup
         -E <encoding>   : encoding (default utf-8)
         -b <backup_dir> : backup_dir (default see upper)
         -f <out file>   : output file, if not set it export in stdout
+        -F              : filter address (regex for address. e.g '.*0781112233.*')
         -q              : quiet    (default false)
         -v              : print version
         -c              : check last version
@@ -44,7 +46,7 @@ desc = """SMS Exporter from iPhone backup
     export-iphone-sms -b /path/to/backup/copy csv > sms.csv
 """
 
-import os, sys
+import os, sys, re
 import urllib
 import getopt
 import sqlite3 as db # abstraction of database
@@ -69,13 +71,14 @@ EXIT_ERROR_VERSION_CHECK = 5
 ##
 class SMSExporter(object):
     
-    def __init__(self, sqlite_db, encoding='utf8'):
+    def __init__(self, sqlite_db, encoding='utf8', address_filter=None):
         self.sqlite_db = sqlite_db
         self.conn = db.connect(sqlite_db)
         self.data = None
         self.fields = ('rowid', 'date', 'address', 'text', 'flags')
         self.encoding = encoding
         self.exporters = {}
+        self.address_regx = re.compile(address_filter) if address_filter else re.compile('.*')
     
     def __open_cursor(self):
         c = self.conn.cursor()
@@ -99,17 +102,23 @@ class SMSExporter(object):
             self.data.append(self.__fetch_message(row))
         c.close()
     
+    def __accept_message(self, message):
+        return self.address_regx.match(message['address'])
+    
     def __loop_messages(self, callback):
         count = 0
         if self.data == None:
             c = self.__open_cursor()
             for row in c:
-                callback(self.__fetch_message(row))
-                count += 1
+                message = self.__fetch_message(row)
+                if self.__accept_message(message):
+                    callback(message)
+                    count += 1
             c.close()
         else:
-            count = len(self.data)
-            for row in self.data:
+            data = filter(self.__accept_message, self.data)
+            count = len(data)
+            for row in data:
                 callback(row)
         return count
     
@@ -250,6 +259,104 @@ class XMLExporter(BufferedExporterBase):
             el_messages.appendChild(self.message_factory.create(doc, message))
         self.output.write(doc.toprettyxml(encoding = self.encoding))
 
+class HTMLExporter(BufferedExporterBase):
+    name = 'html'
+    CSS = '''
+        #header {
+            border-bottom: 1px solid #999;
+            text-align: center;
+        }
+        #content, #header {
+            margin: 0 auto;
+            width: 500px;
+        }
+        #content {
+            padding: 1em;
+        }
+        #content div.income {
+            background-color: #ddd;
+            border-bottom-right-radius: 0;
+            -moz-border-radius-bottomright: 0;
+            margin-left: 2em;
+        }
+        #content div.outcome {
+            background-color: #A3E6A5;
+            border-bottom-left-radius: 0;
+            -moz-border-radius-bottomleft: 0;
+            margin-right: 2em;
+        }
+        #content .message {
+            border: 1px solid #ccc;
+            border-radius: 10px;
+            -moz-border-radius: 10px;
+            padding: .5em;
+            margin-bottom: 1em;
+        }
+        #content div.message:hover {
+            border-color: #999;
+        }
+        #content .message_id:before {
+            content: '#';
+        }
+        #content .message_id, #content .message_date, #content .message_address {
+            font-size: smaller;
+            color: #999;
+        }
+        #content .message_id {
+            float: left;
+        }
+        #content .message_date {
+            float: right;
+        }
+        
+        #content div.message_address {
+            color: #9494FF;
+            float: left;
+            margin-left: 5px;
+        }
+        #content .message_text {
+            clear: both;
+            padding-top: 0.3em;
+        }
+    '''
+    
+    def create_el(self, doc, name, parent=None, attrs=None):
+        el = doc.createElement(name)
+        if parent:
+            parent.appendChild(el)
+        if attrs:
+            map(lambda attr: el.setAttribute(*attr), attrs)
+        return el
+    
+    def create_message_div(self, doc, message, parent=None):
+        if message['flags'] == 2:
+            action = 'income'
+        else:
+            action = 'outcome'
+        el_message = self.create_el(doc, 'div', parent, [('class', '%s %s' % ('message', action))])
+        self.create_el(doc, 'div', el_message, [('class', 'message_id')]).appendChild(doc.createTextNode(str(message['rowid'])))
+        self.create_el(doc, 'div', el_message, [('class', 'message_date')]).appendChild(doc.createTextNode(str(message['date'])))
+        self.create_el(doc, 'div', el_message, [('class', 'message_address')]).appendChild(doc.createTextNode(message['address']))
+        self.create_el(doc, 'div', el_message, [('class', 'message_text')]).appendChild(doc.createTextNode(message['text']))
+        return el_message
+    
+    def end(self):
+        from xml.dom import getDOMImplementation
+        impl = getDOMImplementation()
+        doc = impl.createDocument(None, 'html', None)
+        el_html = doc.documentElement
+        el_head = self.create_el(doc, 'head', el_html)
+        el_title = self.create_el(doc, 'title', el_head).appendChild(doc.createTextNode('iPhone SMS'))
+        el_style = self.create_el(doc, 'style', el_head, [('type', 'text/css')]).appendChild(doc.createTextNode(HTMLExporter.CSS))
+        el_body = self.create_el(doc, 'body', el_html)
+        el_div_header = self.create_el(doc, 'div', el_body, [('id', 'header')])
+        el_h4_title = self.create_el(doc, 'h4', el_div_header).appendChild(doc.createTextNode('iPhone SMS'))
+        el_div_content = self.create_el(doc, 'div', el_body, [('id', 'content')])
+        
+        for message in self.messages:
+            self.create_message_div(doc, message, el_div_content)
+        self.output.write(doc.toprettyxml(encoding = self.encoding))
+
 def usage(status=EXIT_ERROR):
     global desc
     sys.stderr.write(desc)
@@ -306,18 +413,21 @@ def upgrade_to_last_version():
 
 def parse_argv(argv):
     try:
-        opts, args = getopt.getopt(argv[1:], 'E:b:f:qhvcu')
+        opts, args = getopt.getopt(argv[1:], 'E:b:f:F:qhvcu')
     except getopt.GetoptError:
         usage()
         
     global quiet, default_encoding, backup_dir, version
     output = sys.stdout
     encoding = default_encoding
+    address_filter = None
     for o, v in opts:
         if o == '-E':
             encoding = v
         if o == '-f':
             output = v
+        if o == '-F':
+            address_filter = v
         if o == '-q':
             quiet = True
         if o == '-v':
@@ -339,7 +449,7 @@ def parse_argv(argv):
         usage()
 
     format = args[0]
-    return (format, encoding, backup_dir, quiet, output)
+    return (format, encoding, backup_dir, quiet, output, address_filter)
 
 def get_menu_choice(text, choices, quiet):
     if quiet:
@@ -370,7 +480,7 @@ def get_menu_choice(text, choices, quiet):
             break
         
 def main(argv):
-    format, encoding, backup_dir, quiet, output = parse_argv(argv)
+    format, encoding, backup_dir, quiet, output, address_filter = parse_argv(argv)
     
     path = []
     log('locating sms database..')
@@ -397,8 +507,9 @@ def main(argv):
         path = path[0][0]
         log('found in "%s"' % path, 3)
     
-    exporter = SMSExporter(path, encoding)
+    exporter = SMSExporter(path, encoding, address_filter)
     exporter.register(TextExporter())
+    exporter.register(HTMLExporter())
     exporter.register(CSVExporter())
     exporter.register(XMLExporter(XMLMessageFactory()))
     exporter.register(JSONExporter())
