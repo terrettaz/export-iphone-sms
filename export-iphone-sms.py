@@ -199,7 +199,9 @@ class CSVExporter(ExporterBase):
 
     def export(self, message):
         fields = []
-        for field in message.values():
+        values =  message.values()
+        values[0] = datetime.fromtimestamp(values[0]).strftime(self.date_format)
+        for field in values:
             if isinstance(field, unicode):
                 field = field.encode('utf-8')
             fields.append(field)
