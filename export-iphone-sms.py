@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: iso-8859-1 -*-
 
-version = '0.7'
+version = '0.8'
 
 __version__ = "$Revision: %s $" % version
 __author__ = "Pierrick Terrettaz"
@@ -151,6 +151,8 @@ class SMSExporter(object):
             else:
                 ret = False
         except db.OperationalError:
+            ret = False
+        except db.DatabaseError:
             ret = False
         c.close()
         conn.close()
