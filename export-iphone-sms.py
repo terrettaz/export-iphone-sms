@@ -56,6 +56,7 @@ from datetime import datetime
 quiet = False
 default_encoding = 'utf8'
 backup_dir = '%s/Library/Application Support/MobileSync' % os.path.expanduser('~')
+db_name = '3d0d7e5fb2ce288813306e4d4636395e047a3d28'
 
 EXIT_SUCCESS = 0
 EXIT_ERROR = 1
@@ -150,9 +151,9 @@ class SMSExporter(object):
                 ret = (row[0], row[2])
             else:
                 ret = False
-        except db.OperationalError:
+        except db.OperationalError, e:
             ret = False
-        except db.DatabaseError:
+        except db.DatabaseError, e:
             ret = False
         c.close()
         conn.close()
@@ -493,10 +494,8 @@ def main(argv):
     
     for root, dirs, files in os.walk(backup_dir):
         for f in files:
-            filepath = os.path.join(root, f)
-            db_file = open(filepath)
-            content = db_file.read(15)
-            if content == 'SQLite format 3':
+            if f == db_name:
+                filepath = os.path.join(root, f)
                 last_sms = SMSExporter.get_last_sms(filepath)
                 if last_sms:
                     path.append((filepath, last_sms))
