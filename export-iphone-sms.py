@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: iso-8859-1 -*-
 
-version = '0.8'
+version = '0.7'
 
 __version__ = "$Revision: %s $" % version
 __author__ = "Pierrick Terrettaz"
